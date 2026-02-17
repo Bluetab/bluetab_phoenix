@@ -4,7 +4,7 @@ defmodule BluetabPhoenix.MixProject do
   def project do
     [
       app: :bluetab_phoenix,
-      version: "0.1.0",
+      version: "26.2.17",
       elixir: "~> 1.19",
       start_permanent: Mix.env() == :prod,
       deps: deps()
