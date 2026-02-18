@@ -26,7 +26,7 @@ Add `bluetab_phoenix` as a dependency in your project's `mix.exs`:
 ```elixir
 def deps do
   [
-    {:bluetab_phoenix, git: "https://gitlab.bluetab.net/internalapps/tools/bluetab_phoenix.git"}
+    {:bluetab_phoenix, git: "https://github.com/Bluetab/bluetab_phoenix.git"}
   ]
 end
 ```
