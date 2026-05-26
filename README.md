@@ -21,6 +21,12 @@ mix igniter.new my_app --with phx.new --install ash,ash_phoenix \
 
 ## Installation
 
+```sh
+mix igniter.install bluetab_phoenix@github:Bluetab/bluetab_phoenix
+```
+
+### Or
+
 Add `bluetab_phoenix` as a dependency in your project's `mix.exs`:
 
 ```elixir
@@ -48,6 +54,7 @@ The installer applies the following changes to your project:
 
 - Adds a `google` strategy to the User resource (`Accounts.User`)
 - Adds a `register_with_google` action with attribute mapping from Google user info
+- Makes the **first Google sign-up on an empty database** an admin automatically (bootstrap admin)
 - Adds user attributes: `email`, `given_name`, `family_name`, `picture`, `is_admin`, `confirmed_at`
 - Adds a `unique_email` identity
 - Configures `Secrets` module with `secret_for/4` clauses that read `GOOGLE_CLIENT_ID`, `GOOGLE_CLIENT_SECRET`, and `GOOGLE_REDIRECT_URI` from environment variables
@@ -62,6 +69,7 @@ The installer applies the following changes to your project:
 
 ### Admin support
 
+- Grants admin to the first user who registers via Google when the `users` table is empty
 - Adds an `is_admin` boolean attribute (default `false`) to the User resource
 - Adds a `live_admin_required` guard to `LiveUserAuth` that checks `is_admin`
 - Creates `HomeLive` (authenticated) and `AdminLive` (admin-only) LiveView pages
@@ -94,7 +102,7 @@ The installer applies the following changes to your project:
    GOOGLE_REDIRECT_URI=http://localhost:4000/auth/user/google/callback
    ```
 
-3. To make a user an admin, set `is_admin: true` on their record.
+3. On a fresh database, the **first person to sign in with Google** becomes an admin. To promote others later, set `is_admin: true` on their user record.
 
 ## Idempotency
 
