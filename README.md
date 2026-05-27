@@ -80,21 +80,39 @@ The installer applies the following changes to your project:
 
 ### UI & Branding
 
-- Updates the app layout header with navigation, theme toggle, conditional admin link, user email, and sign-out
+- Updates the app layout with `bt-shell--app`, `bt_topbar`, theme toggle, user menu, and sign-out
+- Styles `HomeLive` and `AdminLive` with design-system typography (`bt-hero`, `bt-eyebrow`, etc.)
 - Configures `AuthOverrides` with Bluetab-branded login banner (light/dark images, app name)
 - Copies `bluetab_ibm_light.png` and `bluetab_ibm_dark.png` to `priv/static/images/`
 - Adds `.env` to `.gitignore`
 
+### Bluetab Design System (`bds`)
+
+- Adds `{:bds, github: "Bluetab/bds"}` to `mix.exs`
+- Imports `deps/bds/priv/static/bds.css` from `assets/css/app.css`
+- Calls `initBtInteractions()` from `assets/js/app.js` (esbuild alias to `deps/bds`)
+- Loads Titillium Web via Google Fonts and bootstraps `bt-theme` in `root.html.heex`
+- Imports `Bds.Components` in the web module for `bt_*` function components
+
+Reference consumer: the `ds_tester` app in the monorepo.
+
 ## After installation
 
-1. Generate and run the database migration:
+1. Fetch dependencies and build assets:
+
+   ```bash
+   mix deps.get
+   mix assets.build
+   ```
+
+2. Generate and run the database migration:
 
    ```bash
    mix ash_postgres.generate_migrations --name google_login
    mix ash_postgres.migrate
    ```
 
-2. Set the required environment variables (e.g. in a `.env` file):
+3. Set the required environment variables (e.g. in a `.env` file):
 
    ```bash
    GOOGLE_CLIENT_ID=your_client_id
@@ -102,7 +120,7 @@ The installer applies the following changes to your project:
    GOOGLE_REDIRECT_URI=http://localhost:4000/auth/user/google/callback
    ```
 
-3. On a fresh database, the **first person to sign in with Google** becomes an admin. To promote others later, set `is_admin: true` on their user record.
+4. On a fresh database, the **first person to sign in with Google** becomes an admin. To promote others later, set `is_admin: true` on their user record.
 
 ## Idempotency
 

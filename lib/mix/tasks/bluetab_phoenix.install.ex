@@ -37,6 +37,13 @@ if Code.ensure_loaded?(Igniter) do
     19. Adds a `ci/env.sh` helper for ECR login and image tagging
     20. Refactors `runtime.exs` to use individual DB env vars instead of `DATABASE_URL`
 
+    ### Bluetab Design System (`bds`)
+    21. Adds the `bds` Hex dependency (`Bluetab/bds`)
+    22. Imports compiled design-system CSS in `assets/css/app.css`
+    23. Wires `initBtInteractions()` in `assets/js/app.js` with an esbuild alias to `deps/bds`
+    24. Adds Titillium Web (Google Fonts) and `bt-theme` bootstrap to `root.html.heex`
+    25. Imports `Bds.Components` in the web module for `bt_*` function components
+
     ## Usage
 
         mix igniter.install bluetab_phoenix
@@ -102,13 +109,16 @@ if Code.ensure_loaded?(Igniter) do
         # Auth flow & Admin
         |> add_admin_auth_mount(live_user_auth_module)
         |> create_home_live(home_live_module, web_module, live_user_auth_module, app_name)
+        |> update_home_live_ds(home_live_module, app_name)
         |> create_admin_live(admin_live_module, web_module, live_user_auth_module)
+        |> update_admin_live_ds(admin_live_module)
         |> update_router(router_module, live_user_auth_module)
         |> clean_sign_in_route(router_module)
         |> relocate_ash_admin(router_module)
-        |> update_layouts_app(layouts_module, app_name)
+        |> update_layouts_app(layouts_module, web_module, app_name)
         |> update_auth_overrides(auth_overrides_module, app_name)
         |> copy_bluetab_images()
+        |> install_design_system(prefix, web_module)
         |> remove_page_controller_files(prefix)
         # Common
         |> update_gitignore()
@@ -119,27 +129,32 @@ if Code.ensure_loaded?(Igniter) do
         |> create_ci_env_sh()
         |> refactor_runtime_db_config()
         |> Igniter.add_notice("""
-        Bluetab Phoenix has been configured with Google OAuth, Docker release, and CI!
+        Bluetab Phoenix has been configured with Google OAuth, the Bluetab Design System, Docker release, and CI!
 
         Next steps:
 
-        1. Generate and run the database migration:
+        1. Fetch dependencies and build assets (includes `bds` CSS/JS):
+
+             mix deps.get
+             mix assets.build
+
+        2. Generate and run the database migration:
 
              mix ash_postgres.generate_migrations --name google_login
              mix ash_postgres.migrate
 
-        2. Set the following environment variables (e.g. in a .env file):
+        3. Set the following environment variables (e.g. in a .env file):
 
              GOOGLE_CLIENT_ID=your_client_id
              GOOGLE_CLIENT_SECRET=your_client_secret
              GOOGLE_REDIRECT_URI=http://localhost:4000/auth/user/google/callback
 
-        3. Sign in with Google once on a fresh database — the first user becomes an admin
+        4. Sign in with Google once on a fresh database — the first user becomes an admin
            automatically. Additional users are non-admin unless you promote them.
 
-        4. Review the generated Dockerfile and .gitlab-ci.yml for your deployment setup.
+        5. Review the generated Dockerfile and .gitlab-ci.yml for your deployment setup.
 
-        5. Set the following database environment variables for production:
+        6. Set the following database environment variables for production:
 
              DB_USER=your_db_user
              DB_PASSWORD=your_db_password
@@ -500,35 +515,14 @@ if Code.ensure_loaded?(Igniter) do
       if exists? do
         igniter
       else
-        contents = """
-        use #{inspect(web_module)}, :live_view
-
-        on_mount {#{inspect(live_user_auth_module)}, :live_user_required}
-
-        @impl true
-        def mount(_params, _session, socket) do
-          {:ok, socket}
-        end
-
-        @impl true
-        def render(assigns) do
-          ~H\"\"\"
-          <Layouts.app flash={@flash} current_user={@current_user}>
-            <div class="flex items-center justify-center min-h-[calc(100vh-200px)]">
-              <div class="text-center">
-                <h1 class="text-4xl font-bold">Welcome to #{app_name}</h1>
-                <p class="mt-4 text-lg text-gray-600 dark:text-gray-400">
-                  Your authenticated home page
-                </p>
-              </div>
-            </div>
-          </Layouts.app>
-          \"\"\"
-        end
-        """
+        contents = home_live_module_contents(web_module, live_user_auth_module, app_name)
 
         Igniter.Project.Module.create_module(igniter, home_live_module, contents)
       end
+    end
+
+    defp update_home_live_ds(igniter, home_live_module, app_name) do
+      patch_live_render(igniter, home_live_module, home_live_render_snippet(app_name), "bt-hero")
     end
 
     defp create_admin_live(igniter, admin_live_module, web_module, live_user_auth_module) do
@@ -537,34 +531,108 @@ if Code.ensure_loaded?(Igniter) do
       if exists? do
         igniter
       else
-        contents = """
-        use #{inspect(web_module)}, :live_view
+        contents = admin_live_module_contents(web_module, live_user_auth_module)
 
-        on_mount {#{inspect(live_user_auth_module)}, :live_admin_required}
+        Igniter.Project.Module.create_module(igniter, admin_live_module, contents)
+      end
+    end
 
-        @impl true
-        def mount(_params, _session, socket) do
-          {:ok, socket}
-        end
+    defp update_admin_live_ds(igniter, admin_live_module) do
+      patch_live_render(igniter, admin_live_module, admin_live_render_snippet(), "bt-hero")
+    end
 
+    defp home_live_module_contents(web_module, live_user_auth_module, app_name) do
+      """
+      use #{inspect(web_module)}, :live_view
+
+      on_mount {#{inspect(live_user_auth_module)}, :live_user_required}
+
+      @impl true
+      def mount(_params, _session, socket) do
+        {:ok, socket}
+      end
+
+      #{home_live_render_snippet(app_name)}
+      """
+    end
+
+    defp admin_live_module_contents(web_module, live_user_auth_module) do
+      """
+      use #{inspect(web_module)}, :live_view
+
+      on_mount {#{inspect(live_user_auth_module)}, :live_admin_required}
+
+      @impl true
+      def mount(_params, _session, socket) do
+        {:ok, socket}
+      end
+
+      #{admin_live_render_snippet()}
+      """
+    end
+
+    defp home_live_render_snippet(app_name) do
+      """
         @impl true
         def render(assigns) do
           ~H\"\"\"
           <Layouts.app flash={@flash} current_user={@current_user}>
-            <div class="flex items-center justify-center min-h-[calc(100vh-200px)]">
-              <div class="text-center">
-                <h1 class="text-4xl font-bold">Admin Dashboard</h1>
-                <p class="mt-4 text-lg text-gray-600 dark:text-gray-400">
-                  Admin-only access page
-                </p>
-              </div>
-            </div>
+            <section class="bt-hero">
+              <p class="bt-eyebrow">{gettext("Welcome")}</p>
+              <h1>#{app_name}</h1>
+              <p class="bt-lead bt-muted">
+                {gettext("Your authenticated home page.")}
+              </p>
+            </section>
           </Layouts.app>
           \"\"\"
         end
-        """
+      """
+    end
 
-        Igniter.Project.Module.create_module(igniter, admin_live_module, contents)
+    defp admin_live_render_snippet do
+      """
+        @impl true
+        def render(assigns) do
+          ~H\"\"\"
+          <Layouts.app flash={@flash} current_user={@current_user}>
+            <section class="bt-hero">
+              <p class="bt-eyebrow">{gettext("Administration")}</p>
+              <h1>{gettext("Admin dashboard")}</h1>
+              <p class="bt-lead bt-muted">
+                {gettext("Admin-only access.")}
+              </p>
+            </section>
+          </Layouts.app>
+          \"\"\"
+        end
+      """
+    end
+
+    defp patch_live_render(igniter, live_module, render_snippet, ds_marker) do
+      case Igniter.Project.Module.find_module(igniter, live_module) do
+        {:ok, {igniter, source, _}} ->
+          path = Rewrite.Source.get(source, :path)
+
+          Igniter.update_file(igniter, path, fn source ->
+            content = Rewrite.Source.get(source, :content)
+
+            content =
+              if String.contains?(content, ds_marker) do
+                content
+              else
+                Regex.replace(
+                  ~r/  @impl true\n  def render\(assigns\) do\n    ~H""".*?"""\n  end\n/s,
+                  content,
+                  String.trim_trailing(render_snippet) <> "\n"
+                )
+              end
+
+            Rewrite.Source.update(source, :content, content)
+          end)
+
+        {:error, igniter} ->
+          igniter
       end
     end
 
@@ -843,7 +911,7 @@ if Code.ensure_loaded?(Igniter) do
     # avoid AST issues with ~H sigil content)
     # ──────────────────────────────────────────────
 
-    defp update_layouts_app(igniter, layouts_module, app_name) do
+    defp update_layouts_app(igniter, layouts_module, web_module, app_name) do
       new_app_fn = build_app_function(app_name)
 
       case Igniter.Project.Module.find_module(igniter, layouts_module) do
@@ -852,6 +920,18 @@ if Code.ensure_loaded?(Igniter) do
 
           Igniter.update_file(igniter, path, fn source ->
             content = Rewrite.Source.get(source, :content)
+
+            content =
+              if String.contains?(content, "import Bds.Components") do
+                content
+              else
+                String.replace(
+                  content,
+                  "use #{inspect(web_module)}, :html",
+                  "use #{inspect(web_module)}, :html\n  import Bds.Components",
+                  global: false
+                )
+              end
 
             content =
               if String.contains?(content, "attr :current_user") do
@@ -873,6 +953,27 @@ if Code.ensure_loaded?(Igniter) do
                 new_app_fn
               )
 
+            content =
+              content
+              |> repair_flash_group_attrs_order()
+              |> ensure_layouts_user_initials()
+
+            content =
+              String.replace(
+                content,
+                "/images/bluetab_ibm_light.png",
+                "/images/bluetab_ibm_dark.png",
+                global: false
+              )
+
+            content =
+              String.replace(
+                content,
+                "<.flash_group flash={@flash} />",
+                ~s(<.flash_group id="flash-group" flash={@flash} />),
+                global: false
+              )
+
             Rewrite.Source.update(source, :content, content)
           end)
 
@@ -888,44 +989,138 @@ if Code.ensure_loaded?(Igniter) do
       ~S'''
         def app(assigns) do
           ~H"""
-          <header class="bg-base-200 border-b border-base-300">
-            <div class="navbar px-4 sm:px-6 lg:px-8 max-w-7xl mx-auto h-12 min-h-12">
-              <div class="flex-1">
-                <.link navigate={~p"/"} class="text-xl font-bold">
+          <div class="bt-shell bt-shell--app">
+            <.bt_topbar>
+              <:brand>
+                <.bt_navbar_logo_link navigate={~p"/"} logo_src={~p"/images/bluetab_ibm_dark.png"}>
                   APP_NAME_PLACEHOLDER
-                </.link>
-              </div>
-              <div class="flex-none">
-                <div class="flex items-center gap-3">
-                  <Layouts.theme_toggle />
-                  <%= if @current_user do %>
-                    <%= if @current_user.is_admin do %>
-                      <.link navigate={~p"/admin"} class="btn btn-xs btn-primary">
-                        Admin
-                      </.link>
-                    <% end %>
-                    <span class="text-sm">{@current_user.email}</span>
-                    <.link href={~p"/sign-out"} class="btn btn-xs btn-ghost">
-                      Log out
+                </.bt_navbar_logo_link>
+              </:brand>
+              <:actions>
+                <%= if @current_user do %>
+                  <%= if @current_user.is_admin do %>
+                    <.link navigate={~p"/admin"} class="bt-nav-link">
+                      {gettext("Admin")}
                     </.link>
                   <% end %>
-                </div>
-              </div>
-            </div>
-          </header>
+                  <.bt_navbar_theme_toggle label={gettext("Toggle theme")} />
+                  <.bt_navbar_user_menu
+                    name={@current_user.given_name || @current_user.email}
+                    role={if @current_user.is_admin, do: gettext("Admin"), else: gettext("Member")}
+                    initials={user_initials(@current_user)}
+                    avatar_src={@current_user.picture}
+                  >
+                    <.link href={~p"/sign-out"} class="bt-navbar-menu-item bt-navbar-menu-item--danger">
+                      {gettext("Log out")}
+                    </.link>
+                  </.bt_navbar_user_menu>
+                <% else %>
+                  <.bt_navbar_theme_toggle label={gettext("Toggle theme")} />
+                <% end %>
+              </:actions>
+            </.bt_topbar>
 
-          <main class="px-4 py-8 sm:px-6 lg:px-8">
-            <div class="mx-auto max-w-7xl">
+            <main class="bt-main">
               {render_slot(@inner_block)}
-            </div>
-          </main>
+            </main>
 
-          <.flash_group flash={@flash} />
+            <.flash_group id="flash-group" flash={@flash} />
+          </div>
           """
         end
       '''
       |> String.trim_trailing()
       |> String.replace("APP_NAME_PLACEHOLDER", app_name)
+    end
+
+    defp repair_flash_group_attrs_order(content) do
+      case Regex.run(
+             ~r/(  attr :id, :string[^\n]*\n)\n(  defp user_initials[\s\S]*?)(  def flash_group)/,
+             content
+           ) do
+        [match, attrs_line, _defp_block, def_line] ->
+          String.replace(content, match, attrs_line <> "\n\n" <> def_line, global: false)
+
+        _ ->
+          content
+      end
+    end
+
+    defp ensure_layouts_user_initials(content) do
+      cond do
+        not String.contains?(content, "defp user_initials") ->
+          insert_layouts_user_initials(content)
+
+        flash_group_attrs_separated_from_def?(content) ->
+          fix_misplaced_layouts_user_initials(content)
+
+        true ->
+          content
+      end
+    end
+
+    defp flash_group_attrs_separated_from_def?(content) do
+      case Regex.run(~r/def flash_group\(assigns\) do/, content, return: :index) do
+        {def_idx, _} ->
+          before_def = binary_part(content, 0, def_idx)
+
+          String.contains?(before_def, "defp user_initials") and
+            String.contains?(before_def, "Shows the flash group")
+
+        _ ->
+          false
+      end
+    end
+
+    defp insert_layouts_user_initials(content) do
+      helpers = "\n\n" <> layouts_user_initials() <> "\n\n"
+
+      cond do
+        String.contains?(content, "Provides dark vs light theme toggle") ->
+          String.replace(
+            content,
+            ~r/^  @doc \"\"\"\n  Provides dark vs light theme toggle/m,
+            helpers <> "  @doc \"\"\"\n  Provides dark vs light theme toggle",
+            global: false
+          )
+
+        true ->
+          String.replace(content, ~r/^end\s*$/m, helpers <> "end", global: false)
+      end
+    end
+
+    defp fix_misplaced_layouts_user_initials(content) do
+      content =
+        case Regex.run(
+               ~r/\n  defp user_initials\(%\{given_name: given\} = user\)[\s\S]*?defp user_initials\(_\), do: \"\?\"\n/,
+               content
+             ) do
+          [block] -> String.replace(content, block, "\n", global: false)
+          _ -> content
+        end
+
+      content
+      |> repair_flash_group_attrs_order()
+      |> ensure_layouts_user_initials()
+    end
+
+    defp layouts_user_initials do
+      ~S'''
+        defp user_initials(%{given_name: given} = user) when is_binary(given) and given != "" do
+          [given, Map.get(user, :family_name)]
+          |> Enum.filter(&(is_binary(&1) and &1 != ""))
+          |> Enum.map(&String.first/1)
+          |> Enum.join()
+          |> String.upcase()
+        end
+
+        defp user_initials(%{email: email}) when is_binary(email) do
+          email |> String.slice(0, 2) |> String.upcase()
+        end
+
+        defp user_initials(_), do: "?"
+      '''
+      |> String.trim_trailing()
     end
 
     # ──────────────────────────────────────────────
@@ -1014,6 +1209,174 @@ if Code.ensure_loaded?(Igniter) do
       end
 
       igniter
+    end
+
+    # ──────────────────────────────────────────────
+    # Design system: bds Hex dep, assets, root layout
+    # ──────────────────────────────────────────────
+
+    @bds_css_import ~s|@import "../../deps/bds/priv/static/bds.css";|
+
+    @titillium_font_links """
+        <link rel="preconnect" href="https://fonts.googleapis.com">
+        <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+        <link href="https://fonts.googleapis.com/css2?family=Titillium+Web:ital,wght@0,200;0,300;0,400;0,600;0,700;0,900;1,200;1,300;1,400;1,600;1,700&display=swap" rel="stylesheet">
+    """
+
+    @bt_theme_bootstrap_script """
+        <script>
+          (() => {
+            const storageKey = "bt-theme";
+            const fallback = "light";
+            const theme = localStorage.getItem(storageKey) || fallback;
+            document.documentElement.dataset.theme = theme;
+          })();
+        </script>
+    """
+
+    defp install_design_system(igniter, prefix, web_module) do
+      otp_app = prefix |> Module.split() |> List.last() |> Macro.underscore()
+
+      igniter
+      |> add_bds_dependency()
+      |> patch_app_css_for_bds()
+      |> patch_app_js_for_bds()
+      |> patch_esbuild_for_bds()
+      |> patch_root_layout_for_bds(otp_app)
+      |> import_bds_components(web_module, otp_app)
+    end
+
+    defp add_bds_dependency(igniter) do
+      Igniter.Project.Deps.add_dep(igniter, {:bds, github: "Bluetab/bds"}, on_exists: :skip)
+    end
+
+    defp patch_app_css_for_bds(igniter) do
+      Igniter.update_file(igniter, "assets/css/app.css", fn source ->
+        content = Rewrite.Source.get(source, :content)
+
+        content =
+          if String.contains?(content, "bds.css") or String.contains?(content, "bds/styles") do
+            content
+          else
+            String.trim_trailing(content) <> "\n\n" <> @bds_css_import <> "\n"
+          end
+
+        Rewrite.Source.update(source, :content, content)
+      end)
+    end
+
+    defp patch_app_js_for_bds(igniter) do
+      Igniter.update_file(igniter, "assets/js/app.js", fn source ->
+        content = Rewrite.Source.get(source, :content)
+
+        content =
+          if String.contains?(content, "initBtInteractions") do
+            content
+          else
+            injection = """
+            import {initBtInteractions} from "bds/interactions"
+
+            initBtInteractions()
+
+            """
+
+            cond do
+              String.contains?(content, ~s|import "phoenix_html"|) ->
+                String.replace(content, ~s|import "phoenix_html"|, ~s|import "phoenix_html"| <> "\n" <> injection, global: false)
+
+              String.contains?(content, ~s|import 'phoenix_html'|) ->
+                String.replace(content, ~s|import 'phoenix_html'|, ~s|import 'phoenix_html'| <> "\n" <> injection, global: false)
+
+              true ->
+                injection <> content
+            end
+          end
+
+        Rewrite.Source.update(source, :content, content)
+      end)
+    end
+
+    defp patch_esbuild_for_bds(igniter) do
+      Igniter.update_file(igniter, "config/config.exs", fn source ->
+        content = Rewrite.Source.get(source, :content)
+
+        content =
+          if String.contains?(content, "bds/interactions") do
+            content
+          else
+            String.replace(
+              content,
+              "--alias:@=.),",
+              "--alias:@=. --alias:bds/interactions=../deps/bds/priv/static/interactions.js),",
+              global: false
+            )
+          end
+
+        Rewrite.Source.update(source, :content, content)
+      end)
+    end
+
+    defp patch_root_layout_for_bds(igniter, otp_app) do
+      root_layout = "lib/#{otp_app}_web/components/layouts/root.html.heex"
+      patch_root_layout_file(igniter, root_layout)
+    end
+
+    defp patch_root_layout_file(igniter, root_layout) do
+      if Igniter.exists?(igniter, root_layout) do
+        Igniter.update_file(igniter, root_layout, fn source ->
+          content = Rewrite.Source.get(source, :content)
+
+          content =
+            if String.contains?(content, "fonts.googleapis.com") do
+              content
+            else
+              String.replace(content, "  </head>", @titillium_font_links <> "\n  </head>", global: false)
+            end
+
+          content =
+            if String.contains?(content, "bt-theme") do
+              content
+            else
+              String.replace(content, "  </head>", @bt_theme_bootstrap_script <> "\n  </head>", global: false)
+            end
+
+          Rewrite.Source.update(source, :content, content)
+        end)
+      else
+        Igniter.add_warning(igniter, "Could not find #{root_layout}. Design-system font/theme snippets skipped.")
+      end
+    end
+
+    defp import_bds_components(igniter, web_module, otp_app) do
+      web_path = "lib/#{otp_app}_web.ex"
+
+      if Igniter.exists?(igniter, web_path) do
+        Igniter.update_file(igniter, web_path, fn source ->
+          content = Rewrite.Source.get(source, :content)
+
+          content =
+            if String.contains?(content, "Bds.Components") do
+              content
+            else
+              core_import = "import #{inspect(web_module)}.CoreComponents"
+
+              if String.contains?(content, core_import) do
+                String.replace(
+                  content,
+                  core_import,
+                  core_import <> "\n      import Bds.Components",
+                  global: false
+                )
+              else
+                content
+              end
+            end
+
+          Rewrite.Source.update(source, :content, content)
+        end)
+      else
+        igniter
+      end
     end
 
     # ──────────────────────────────────────────────
