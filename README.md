@@ -82,7 +82,8 @@ The installer applies the following changes to your project:
 
 - Updates the app layout with `bt-shell--app`, `bt_topbar`, theme toggle, user menu, and sign-out
 - Styles `HomeLive` and `AdminLive` with design-system typography (`bt-hero`, `bt-eyebrow`, etc.)
-- Configures `AuthOverrides` with Bluetab-branded login banner (light/dark images, app name)
+- Configures `AuthOverrides` with `Bds.AuthBanner` (light/dark Bluetab logos, app title) and `Bds.AuthUi` (token-based Google OAuth button for light/dark theme; see [AAP UI overrides](https://hexdocs.pm/ash_authentication_phoenix/ui-overrides.html))
+- Sets `sign_in_route` overrides to `[YourApp.AuthOverrides, AshAuthentication.Phoenix.Overrides.Default]` (replaces `Overrides.DaisyUI`, which forces the default Ash Framework banner and light-only OAuth styles)
 - Copies `bluetab_ibm_light.png` and `bluetab_ibm_dark.png` to `priv/static/images/`
 - Adds `.env` to `.gitignore`
 
@@ -91,7 +92,7 @@ The installer applies the following changes to your project:
 - Adds `{:bds, github: "Bluetab/bds"}` to `mix.exs`
 - Imports `deps/bds/priv/static/bds.css` from `assets/css/app.css`
 - Calls `initBtInteractions()` from `assets/js/app.js` (esbuild alias to `deps/bds`)
-- Loads Titillium Web via Google Fonts and bootstraps `bt-theme` in `root.html.heex`
+- Loads Titillium Web via Google Fonts, bootstraps `bt-theme` in `root.html.heex`, and removes the default Phoenix `phx:theme` script when present
 - Imports `Bds.Components` in the web module for `bt_*` function components
 
 Reference consumer: the `ds_tester` app in the monorepo.

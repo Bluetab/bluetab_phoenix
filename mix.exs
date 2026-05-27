@@ -21,6 +21,7 @@ defmodule BluetabPhoenix.MixProject do
   # Run "mix help deps" to learn about dependencies.
   defp deps do
     [
+      {:bds, path: "../../bds"},
       {:igniter, "~> 0.7", optional: true},
       {:ash, "~> 3.0", optional: true},
       {:ash_authentication, "~> 4.0", optional: true},

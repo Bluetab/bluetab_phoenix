@@ -41,8 +41,9 @@ if Code.ensure_loaded?(Igniter) do
     21. Adds the `bds` Hex dependency (`Bluetab/bds`)
     22. Imports compiled design-system CSS in `assets/css/app.css`
     23. Wires `initBtInteractions()` in `assets/js/app.js` with an esbuild alias to `deps/bds`
-    24. Adds Titillium Web (Google Fonts) and `bt-theme` bootstrap to `root.html.heex`
+    24. Adds Titillium Web (Google Fonts) and `bt-theme` bootstrap to `root.html.heex` (removes conflicting `phx:theme` script)
     25. Imports `Bds.Components` in the web module for `bt_*` function components
+    26. Configures `AuthOverrides` with `Bds.AuthBanner` (light/dark logos) and `Bds.AuthUi` (Google OAuth button)
 
     ## Usage
 
@@ -114,8 +115,10 @@ if Code.ensure_loaded?(Igniter) do
         |> update_admin_live_ds(admin_live_module)
         |> update_router(router_module, live_user_auth_module)
         |> clean_sign_in_route(router_module)
+        |> configure_sign_in_route_overrides(router_module, auth_overrides_module)
         |> relocate_ash_admin(router_module)
         |> update_layouts_app(layouts_module, web_module, app_name)
+        |> patch_flash_group_for_bds(layouts_module)
         |> update_auth_overrides(auth_overrides_module, app_name)
         |> copy_bluetab_images()
         |> install_design_system(prefix, web_module)
@@ -1146,47 +1149,133 @@ if Code.ensure_loaded?(Igniter) do
     end
 
     # ──────────────────────────────────────────────
+    # Router: sign_in_route overrides (Banner branding)
+    # ──────────────────────────────────────────────
+
+    defp configure_sign_in_route_overrides(igniter, router_module, auth_overrides_module) do
+      auth_str = inspect(auth_overrides_module)
+
+      replacement =
+        "\\1[\n                      #{auth_str},\n                      AshAuthentication.Phoenix.Overrides.Default\n                    ]"
+
+      case Igniter.Project.Module.find_module(igniter, router_module) do
+        {:ok, {igniter, source, _}} ->
+          path = Rewrite.Source.get(source, :path)
+
+          Igniter.update_file(igniter, path, fn source ->
+            content = Rewrite.Source.get(source, :content)
+
+            content =
+              if String.contains?(content, "sign_in_route") do
+                Regex.replace(
+                  ~r/(sign_in_route[\s\S]*?overrides: )\[[\s\S]*?\]/,
+                  content,
+                  replacement,
+                  global: false
+                )
+              else
+                content
+              end
+
+            Rewrite.Source.update(source, :content, content)
+          end)
+
+        {:error, igniter} ->
+          igniter
+      end
+    end
+
+    # ──────────────────────────────────────────────
+    # Layouts: flash above topbar (bt-flash-group)
+    # ──────────────────────────────────────────────
+
+    defp patch_flash_group_for_bds(igniter, layouts_module) do
+      case Igniter.Project.Module.find_module(igniter, layouts_module) do
+        {:ok, {igniter, source, _}} ->
+          path = Rewrite.Source.get(source, :path)
+
+          Igniter.update_file(igniter, path, fn source ->
+            content = Rewrite.Source.get(source, :content)
+
+            content =
+              cond do
+                String.contains?(content, "bt-flash-group") ->
+                  content
+
+                String.contains?(content, ~s|class="bt-stack"\n      style="position:fixed|) ->
+                  Regex.replace(
+                    ~r/<div\n      id=\{@id\}\n      class="bt-stack"\n      style="position:fixed;[^"]*"\n      aria-live="polite">/,
+                    content,
+                    ~s|<div\n      id={@id}\n      class="bt-flash-group"\n      aria-live="polite">|,
+                    global: false
+                  )
+
+                true ->
+                  String.replace(
+                    content,
+                    ~s|<div id={@id} aria-live="polite">|,
+                    ~s|<div id={@id} class="bt-flash-group" aria-live="polite">|,
+                    global: false
+                  )
+              end
+
+            Rewrite.Source.update(source, :content, content)
+          end)
+
+        {:error, igniter} ->
+          igniter
+      end
+    end
+
+    # ──────────────────────────────────────────────
     # AuthOverrides: Bluetab branded login
     # ──────────────────────────────────────────────
 
     defp update_auth_overrides(igniter, auth_overrides_module, app_name) do
-      override_code = """
-      override AshAuthentication.Phoenix.Components.Banner do
-        set :root_class, "flex flex-col-reverse items-center justify-center py-10 gap-2"
-        set :image_class, "w-20"
-        set :image_url, "/images/bluetab_ibm_light.png"
-        set :dark_image_url, "/images/bluetab_ibm_dark.png"
-        set :text, "#{app_name}"
-        set :text_class, "text-4xl font-bold text-center"
-        set :href_class, "text-center"
-      end
-      """
+      case Igniter.Project.Module.find_module(igniter, auth_overrides_module) do
+        {:ok, {igniter, source, _}} ->
+          path = Rewrite.Source.get(source, :path)
 
-      case Igniter.Project.Module.find_and_update_module(
-             igniter,
-             auth_overrides_module,
-             fn zipper ->
-               has_banner? =
-                 Sourceror.Zipper.find(Sourceror.Zipper.topmost(zipper), fn
-                   {:override, _, _} -> true
-                   _ -> false
-                 end) != nil
+          Igniter.update_file(igniter, path, fn source ->
+            content = Rewrite.Source.get(source, :content)
 
-               if has_banner? do
-                 {:ok, zipper}
-               else
-                 {:ok, Igniter.Code.Common.add_code(zipper, override_code)}
-               end
-             end
-           ) do
-        {:ok, igniter} ->
-          igniter
+            content =
+              content
+              |> upsert_auth_override(
+                "AshAuthentication.Phoenix.Components.Banner",
+                Bds.AuthBanner.override_snippet(app_name)
+              )
+              |> upsert_auth_override(
+                "AshAuthentication.Phoenix.Components.OAuth2",
+                Bds.AuthUi.oauth2_override_snippet()
+              )
+
+            Rewrite.Source.update(source, :content, content)
+          end)
 
         {:error, igniter} ->
           Igniter.add_warning(
             igniter,
             "Could not find AuthOverrides module #{inspect(auth_overrides_module)}. Auth styling skipped."
           )
+      end
+    end
+
+    defp upsert_auth_override(content, component, snippet) do
+      block = "  " <> String.trim_trailing(snippet) <> "\n"
+
+      override_pattern =
+        ~r/  override #{Regex.escape(component)} do[\s\S]*?  end\n/
+
+      if Regex.match?(override_pattern, content) do
+        Regex.replace(override_pattern, content, block)
+      else
+        String.replace(
+          content,
+          "use AshAuthentication.Phoenix.Overrides\n",
+          "use AshAuthentication.Phoenix.Overrides\n\n" <> block,
+          global: false
+        )
       end
     end
 
@@ -1247,7 +1336,8 @@ if Code.ensure_loaded?(Igniter) do
     end
 
     defp add_bds_dependency(igniter) do
-      Igniter.Project.Deps.add_dep(igniter, {:bds, github: "Bluetab/bds"}, on_exists: :skip)
+      # Igniter.Project.Deps.add_dep(igniter, {:bds, github: "Bluetab/bds"}, on_exists: :skip)
+      Igniter.Project.Deps.add_dep(igniter, {:bds, path: "../bds"}, on_exists: :skip)
     end
 
     defp patch_app_css_for_bds(igniter) do
@@ -1282,10 +1372,20 @@ if Code.ensure_loaded?(Igniter) do
 
             cond do
               String.contains?(content, ~s|import "phoenix_html"|) ->
-                String.replace(content, ~s|import "phoenix_html"|, ~s|import "phoenix_html"| <> "\n" <> injection, global: false)
+                String.replace(
+                  content,
+                  ~s|import "phoenix_html"|,
+                  ~s|import "phoenix_html"| <> "\n" <> injection,
+                  global: false
+                )
 
               String.contains?(content, ~s|import 'phoenix_html'|) ->
-                String.replace(content, ~s|import 'phoenix_html'|, ~s|import 'phoenix_html'| <> "\n" <> injection, global: false)
+                String.replace(
+                  content,
+                  ~s|import 'phoenix_html'|,
+                  ~s|import 'phoenix_html'| <> "\n" <> injection,
+                  global: false
+                )
 
               true ->
                 injection <> content
@@ -1321,6 +1421,19 @@ if Code.ensure_loaded?(Igniter) do
       patch_root_layout_file(igniter, root_layout)
     end
 
+    # Phoenix 1.8 default theme script conflicts with BDS `bt-theme` / `data-theme`.
+    defp strip_phx_theme_script(content) do
+      if String.contains?(content, "phx:theme") do
+        Regex.replace(
+          ~r/\n    <script>\s*\(\(\) => \{[\s\S]*?phx:theme[\s\S]*?\}\)\(\);\s*<\/script>/,
+          content,
+          ""
+        )
+      else
+        content
+      end
+    end
+
     defp patch_root_layout_file(igniter, root_layout) do
       if Igniter.exists?(igniter, root_layout) do
         Igniter.update_file(igniter, root_layout, fn source ->
@@ -1330,20 +1443,29 @@ if Code.ensure_loaded?(Igniter) do
             if String.contains?(content, "fonts.googleapis.com") do
               content
             else
-              String.replace(content, "  </head>", @titillium_font_links <> "\n  </head>", global: false)
+              String.replace(content, "  </head>", @titillium_font_links <> "\n  </head>",
+                global: false
+              )
             end
+
+          content = strip_phx_theme_script(content)
 
           content =
             if String.contains?(content, "bt-theme") do
               content
             else
-              String.replace(content, "  </head>", @bt_theme_bootstrap_script <> "\n  </head>", global: false)
+              String.replace(content, "  </head>", @bt_theme_bootstrap_script <> "\n  </head>",
+                global: false
+              )
             end
 
           Rewrite.Source.update(source, :content, content)
         end)
       else
-        Igniter.add_warning(igniter, "Could not find #{root_layout}. Design-system font/theme snippets skipped.")
+        Igniter.add_warning(
+          igniter,
+          "Could not find #{root_layout}. Design-system font/theme snippets skipped."
+        )
       end
     end
 
