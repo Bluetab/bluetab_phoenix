@@ -4,7 +4,7 @@ defmodule BluetabPhoenix.MixProject do
   def project do
     [
       app: :bluetab_phoenix,
-      version: "26.2.17",
+      version: "26.6.24",
       elixir: "~> 1.19",
       start_permanent: Mix.env() == :prod,
       deps: deps()
@@ -21,7 +21,7 @@ defmodule BluetabPhoenix.MixProject do
   # Run "mix help deps" to learn about dependencies.
   defp deps do
     [
-      {:bds, path: "../../bds"},
+      {:bds, git: "https://github.com/Bluetab/bds.git", tag: "26.6.24"},
       {:igniter, "~> 0.7", optional: true},
       {:ash, "~> 3.0", optional: true},
       {:ash_authentication, "~> 4.0", optional: true},
