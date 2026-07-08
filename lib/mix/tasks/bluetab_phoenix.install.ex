@@ -1242,6 +1242,34 @@ if Code.ensure_loaded?(Igniter) do
             content =
               content
               |> upsert_auth_override(
+                "AshAuthentication.Phoenix.SignInLive",
+                """
+                override AshAuthentication.Phoenix.SignInLive do
+                  set :root_class, "bt-auth-page"
+                end
+                """
+              )
+              |> upsert_auth_override(
+                "AshAuthentication.Phoenix.Components.SignIn",
+                """
+                override AshAuthentication.Phoenix.Components.SignIn do
+                  set :root_class, "bt-auth-sign-in"
+                  set :strategy_class, "bt-auth-strategy"
+                  set :authentication_error_container_class, "bt-auth-error"
+                  set :authentication_error_text_class, ""
+                end
+                """
+              )
+              |> upsert_auth_override(
+                "AshAuthentication.Phoenix.Components.Flash",
+                """
+                override AshAuthentication.Phoenix.Components.Flash do
+                  set :message_class_info, "bt-auth-flash bt-auth-flash--info"
+                  set :message_class_error, "bt-auth-flash bt-auth-flash--error"
+                end
+                """
+              )
+              |> upsert_auth_override(
                 "AshAuthentication.Phoenix.Components.Banner",
                 Bds.AuthBanner.override_snippet(app_name)
               )
@@ -1336,8 +1364,8 @@ if Code.ensure_loaded?(Igniter) do
     end
 
     defp add_bds_dependency(igniter) do
-      # Igniter.Project.Deps.add_dep(igniter, {:bds, github: "Bluetab/bds"}, on_exists: :skip)
-      Igniter.Project.Deps.add_dep(igniter, {:bds, path: "../bds"}, on_exists: :skip)
+      Igniter.Project.Deps.add_dep(igniter, {:bds, github: "Bluetab/bds", override: true}, on_exists: :skip)
+      # Igniter.Project.Deps.add_dep(igniter, {:bds, path: "../bds"}, on_exists: :skip)
     end
 
     defp patch_app_css_for_bds(igniter) do
@@ -1345,10 +1373,20 @@ if Code.ensure_loaded?(Igniter) do
         content = Rewrite.Source.get(source, :content)
 
         content =
-          if String.contains?(content, "bds.css") or String.contains?(content, "bds/styles") do
-            content
-          else
-            String.trim_trailing(content) <> "\n\n" <> @bds_css_import <> "\n"
+          cond do
+            String.contains?(content, "bds.css") or String.contains?(content, "bds/styles") ->
+              content
+
+            String.contains?(content, ~s|@import "tailwindcss"|) ->
+              String.replace(
+                content,
+                ~s|@import "tailwindcss"|,
+                @bds_css_import <> "\n\n" <> ~s|@import "tailwindcss"|,
+                global: false
+              )
+
+            true ->
+              String.trim_trailing(content) <> "\n\n" <> @bds_css_import <> "\n"
           end
 
         Rewrite.Source.update(source, :content, content)
