@@ -1403,8 +1403,8 @@ if Code.ensure_loaded?(Igniter) do
 
             content =
               Regex.replace(
-                content,
                 ~r/def on_mount\(:current_user, _params, session, socket\) do\n    \{:cont, AshAuthentication\.Phoenix\.LiveSession\.assign_new_resources\(socket, session\)\}\n  end/,
+                content,
                 "def on_mount(:current_user, _params, session, socket) do\n    " <>
                   current_user_body <> "\n  end"
               )
