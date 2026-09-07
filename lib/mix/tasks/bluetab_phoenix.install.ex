@@ -1398,7 +1398,8 @@ if Code.ensure_loaded?(Igniter) do
               if String.contains?(content, "assign_locale") do
                 content
               else
-                String.trim_trailing(content) <> "\n\n" <> locale_helpers <> "\n"
+                helpers = "\n\n" <> locale_helpers <> "\n"
+                String.replace(content, ~r/^end\s*$/m, helpers <> "end", global: false)
               end
 
             content =
