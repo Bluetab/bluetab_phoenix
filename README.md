@@ -80,11 +80,12 @@ The installer applies the following changes to your project:
 
 ### UI & Branding
 
-- Updates the app layout with `bt-shell--app`, `bt_topbar`, theme toggle, user menu, and sign-out
+- Updates the app layout with `bt-shell--app`, `bt_topbar`, locale toggles (in the user menu when signed in), theme toggle, user menu, and sign-out — matching the Tempo reference app
+- Installs `SetLocale` plug, `/set-locale/:locale` route, and LiveView locale hooks for navbar language switching
+- Copies `logo-bluetab.svg`, `bluetab_ibm_light.png`, and `bluetab_ibm_dark.png` to `priv/static/images/`
 - Styles `HomeLive` and `AdminLive` with design-system typography (`bt-hero`, `bt-eyebrow`, etc.)
 - Configures `AuthOverrides` with `Bds.AuthBanner` (light/dark Bluetab logos, app title) and `Bds.AuthUi` (token-based Google OAuth button for light/dark theme; see [AAP UI overrides](https://hexdocs.pm/ash_authentication_phoenix/ui-overrides.html))
 - Sets `sign_in_route` overrides to `[YourApp.AuthOverrides, AshAuthentication.Phoenix.Overrides.Default]` (replaces `Overrides.DaisyUI`, which forces the default Ash Framework banner and light-only OAuth styles)
-- Copies `bluetab_ibm_light.png` and `bluetab_ibm_dark.png` to `priv/static/images/`
 - Adds `.env` to `.gitignore`
 
 ### Bluetab Design System (`bds`)

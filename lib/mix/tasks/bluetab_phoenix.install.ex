@@ -121,6 +121,7 @@ if Code.ensure_loaded?(Igniter) do
         |> patch_flash_group_for_bds(layouts_module)
         |> update_auth_overrides(auth_overrides_module, app_name)
         |> copy_bluetab_images()
+        |> install_locale_support(prefix, web_module, live_user_auth_module, router_module)
         |> install_design_system(prefix, web_module)
         |> remove_page_controller_files(prefix)
         # Common
@@ -915,7 +916,7 @@ if Code.ensure_loaded?(Igniter) do
     # ──────────────────────────────────────────────
 
     defp update_layouts_app(igniter, layouts_module, web_module, app_name) do
-      new_app_fn = build_app_function(app_name)
+      new_app_fn = BluetabPhoenix.app_layout_function(app_name, web_module)
 
       case Igniter.Project.Module.find_module(igniter, layouts_module) do
         {:ok, {igniter, source, _zipper}} ->
@@ -950,6 +951,19 @@ if Code.ensure_loaded?(Igniter) do
               end
 
             content =
+              if String.contains?(content, "attr :locale") do
+                content
+              else
+                String.replace(
+                  content,
+                  ~S'  attr :current_user, :map, default: nil, doc: "the current authenticated user"',
+                  ~S'  attr :current_user, :map, default: nil, doc: "the current authenticated user"' <>
+                    "\n" <>
+                    BluetabPhoenix.Layouts.locale_attr()
+                )
+              end
+
+            content =
               Regex.replace(
                 ~r/^  def app\(assigns\) do\n.*?^  end/ms,
                 content,
@@ -959,7 +973,7 @@ if Code.ensure_loaded?(Igniter) do
             content =
               content
               |> repair_flash_group_attrs_order()
-              |> ensure_layouts_user_initials()
+              |> ensure_layouts_helpers(web_module)
 
             content =
               String.replace(
@@ -988,54 +1002,6 @@ if Code.ensure_loaded?(Igniter) do
       end
     end
 
-    defp build_app_function(app_name) do
-      ~S'''
-        def app(assigns) do
-          ~H"""
-          <div class="bt-shell bt-shell--app">
-            <.bt_topbar>
-              <:brand>
-                <.bt_navbar_logo_link navigate={~p"/"} logo_src={~p"/images/bluetab_ibm_dark.png"}>
-                  APP_NAME_PLACEHOLDER
-                </.bt_navbar_logo_link>
-              </:brand>
-              <:actions>
-                <%= if @current_user do %>
-                  <%= if @current_user.is_admin do %>
-                    <.link navigate={~p"/admin"} class="bt-nav-link">
-                      {gettext("Admin")}
-                    </.link>
-                  <% end %>
-                  <.bt_navbar_theme_toggle label={gettext("Toggle theme")} />
-                  <.bt_navbar_user_menu
-                    name={@current_user.given_name || @current_user.email}
-                    role={if @current_user.is_admin, do: gettext("Admin"), else: gettext("Member")}
-                    initials={user_initials(@current_user)}
-                    avatar_src={@current_user.picture}
-                  >
-                    <.link href={~p"/sign-out"} class="bt-navbar-menu-item bt-navbar-menu-item--danger">
-                      {gettext("Log out")}
-                    </.link>
-                  </.bt_navbar_user_menu>
-                <% else %>
-                  <.bt_navbar_theme_toggle label={gettext("Toggle theme")} />
-                <% end %>
-              </:actions>
-            </.bt_topbar>
-
-            <main class="bt-main">
-              {render_slot(@inner_block)}
-            </main>
-
-            <.flash_group id="flash-group" flash={@flash} />
-          </div>
-          """
-        end
-      '''
-      |> String.trim_trailing()
-      |> String.replace("APP_NAME_PLACEHOLDER", app_name)
-    end
-
     defp repair_flash_group_attrs_order(content) do
       case Regex.run(
              ~r/(  attr :id, :string[^\n]*\n)\n(  defp user_initials[\s\S]*?)(  def flash_group)/,
@@ -1049,34 +1015,24 @@ if Code.ensure_loaded?(Igniter) do
       end
     end
 
-    defp ensure_layouts_user_initials(content) do
+    defp ensure_layouts_helpers(content, web_module) do
       cond do
         not String.contains?(content, "defp user_initials") ->
-          insert_layouts_user_initials(content)
+          insert_layouts_helpers(content, web_module)
+
+        not String.contains?(content, "defp navbar_locales") ->
+          insert_layouts_locale_helpers(content, web_module)
 
         flash_group_attrs_separated_from_def?(content) ->
-          fix_misplaced_layouts_user_initials(content)
+          fix_misplaced_layouts_user_initials(content, web_module)
 
         true ->
           content
       end
     end
 
-    defp flash_group_attrs_separated_from_def?(content) do
-      case Regex.run(~r/def flash_group\(assigns\) do/, content, return: :index) do
-        {def_idx, _} ->
-          before_def = binary_part(content, 0, def_idx)
-
-          String.contains?(before_def, "defp user_initials") and
-            String.contains?(before_def, "Shows the flash group")
-
-        _ ->
-          false
-      end
-    end
-
-    defp insert_layouts_user_initials(content) do
-      helpers = "\n\n" <> layouts_user_initials() <> "\n\n"
+    defp insert_layouts_helpers(content, web_module) do
+      helpers = "\n\n" <> BluetabPhoenix.layout_helpers(web_module) <> "\n\n"
 
       cond do
         String.contains?(content, "Provides dark vs light theme toggle") ->
@@ -1092,7 +1048,26 @@ if Code.ensure_loaded?(Igniter) do
       end
     end
 
-    defp fix_misplaced_layouts_user_initials(content) do
+    defp insert_layouts_locale_helpers(content, web_module) do
+      helpers = "\n\n" <> BluetabPhoenix.Layouts.locale_helpers(web_module) <> "\n"
+
+      String.replace(content, ~r/^end\s*$/m, helpers <> "end", global: false)
+    end
+
+    defp flash_group_attrs_separated_from_def?(content) do
+      case Regex.run(~r/def flash_group\(assigns\) do/, content, return: :index) do
+        {def_idx, _} ->
+          before_def = binary_part(content, 0, def_idx)
+
+          String.contains?(before_def, "defp user_initials") and
+            String.contains?(before_def, "Shows the flash group")
+
+        _ ->
+          false
+      end
+    end
+
+    defp fix_misplaced_layouts_user_initials(content, web_module) do
       content =
         case Regex.run(
                ~r/\n  defp user_initials\(%\{given_name: given\} = user\)[\s\S]*?defp user_initials\(_\), do: \"\?\"\n/,
@@ -1104,26 +1079,7 @@ if Code.ensure_loaded?(Igniter) do
 
       content
       |> repair_flash_group_attrs_order()
-      |> ensure_layouts_user_initials()
-    end
-
-    defp layouts_user_initials do
-      ~S'''
-        defp user_initials(%{given_name: given} = user) when is_binary(given) and given != "" do
-          [given, Map.get(user, :family_name)]
-          |> Enum.filter(&(is_binary(&1) and &1 != ""))
-          |> Enum.map(&String.first/1)
-          |> Enum.join()
-          |> String.upcase()
-        end
-
-        defp user_initials(%{email: email}) when is_binary(email) do
-          email |> String.slice(0, 2) |> String.upcase()
-        end
-
-        defp user_initials(_), do: "?"
-      '''
-      |> String.trim_trailing()
+      |> ensure_layouts_helpers(web_module)
     end
 
     # ──────────────────────────────────────────────
@@ -1315,7 +1271,7 @@ if Code.ensure_loaded?(Igniter) do
       src_dir = Application.app_dir(:bluetab_phoenix, "priv/static/images")
       dst_dir = "priv/static/images"
 
-      for file <- ["bluetab_ibm_light.png", "bluetab_ibm_dark.png"] do
+      for file <- ["bluetab_ibm_light.png", "bluetab_ibm_dark.png", "logo-bluetab.svg"] do
         src = Path.join(src_dir, file)
         dst = Path.join(dst_dir, file)
 
@@ -1326,6 +1282,186 @@ if Code.ensure_loaded?(Igniter) do
       end
 
       igniter
+    end
+
+    # ──────────────────────────────────────────────
+    # Locale: SetLocale plug, controller, LiveView hooks
+    # ──────────────────────────────────────────────
+
+    defp install_locale_support(igniter, prefix, web_module, live_user_auth_module, router_module) do
+      otp_app = prefix |> Module.split() |> List.last() |> Macro.underscore()
+      set_locale_module = Module.concat(web_module, Plugs.SetLocale)
+      locale_controller_module = Module.concat(web_module, LocaleController)
+
+      igniter
+      |> create_set_locale_plug(set_locale_module, web_module, otp_app)
+      |> create_locale_controller(locale_controller_module, web_module, otp_app)
+      |> patch_router_for_locale(router_module, set_locale_module)
+      |> patch_live_user_auth_for_locale(live_user_auth_module, web_module)
+      |> patch_config_for_locale(otp_app)
+      |> patch_root_layout_lang(otp_app)
+    end
+
+    defp create_set_locale_plug(igniter, set_locale_module, web_module, otp_app) do
+      {exists?, igniter} = Igniter.Project.Module.module_exists(igniter, set_locale_module)
+
+      if exists? do
+        igniter
+      else
+        contents = BluetabPhoenix.locale_plug_source(web_module, otp_app)
+        path = "lib/#{otp_app}_web/plugs/set_locale.ex"
+
+        Igniter.create_new_file(igniter, path, contents)
+      end
+    end
+
+    defp create_locale_controller(igniter, locale_controller_module, web_module, otp_app) do
+      {exists?, igniter} = Igniter.Project.Module.module_exists(igniter, locale_controller_module)
+
+      if exists? do
+        igniter
+      else
+        contents = BluetabPhoenix.locale_controller_source(web_module)
+        path = "lib/#{otp_app}_web/controllers/locale_controller.ex"
+
+        Igniter.create_new_file(igniter, path, contents)
+      end
+    end
+
+    defp patch_router_for_locale(igniter, router_module, set_locale_module) do
+      set_locale_str = inspect(set_locale_module)
+
+      case Igniter.Project.Module.find_module(igniter, router_module) do
+        {:ok, {igniter, source, _}} ->
+          path = Rewrite.Source.get(source, :path)
+
+          Igniter.update_file(igniter, path, fn source ->
+            content = Rewrite.Source.get(source, :content)
+
+            content =
+              if String.contains?(content, set_locale_str) do
+                content
+              else
+                String.replace(
+                  content,
+                  "plug :fetch_cookies",
+                  "plug :fetch_cookies\n    plug #{set_locale_str}",
+                  global: false
+                )
+              end
+
+            content =
+              if String.contains?(content, "set-locale") do
+                content
+              else
+                String.replace(
+                  content,
+                  ~r/(scope "\/", [^\n]+ do\n    pipe_through :browser\n)/,
+                  "\\1\n    get \"/set-locale/:locale\", LocaleController, :set\n",
+                  global: false
+                )
+              end
+
+            Rewrite.Source.update(source, :content, content)
+          end)
+
+        {:error, igniter} ->
+          igniter
+      end
+    end
+
+    defp patch_live_user_auth_for_locale(igniter, live_user_auth_module, web_module) do
+      case Igniter.Project.Module.find_module(igniter, live_user_auth_module) do
+        {:ok, {igniter, source, _}} ->
+          path = Rewrite.Source.get(source, :path)
+          web_str = inspect(web_module)
+          verified_routes = "use #{web_str}, :verified_routes"
+          current_user_body = BluetabPhoenix.Locale.current_user_on_mount_body()
+          locale_helpers = BluetabPhoenix.live_user_auth_locale_helpers(web_module)
+
+          Igniter.update_file(igniter, path, fn source ->
+            content = Rewrite.Source.get(source, :content)
+
+            content =
+              if String.contains?(content, verified_routes) do
+                content
+              else
+                String.replace(
+                  content,
+                  "import Phoenix.Component",
+                  "import Phoenix.Component\n  " <> verified_routes,
+                  global: false
+                )
+              end
+
+            content =
+              if String.contains?(content, "assign_locale") do
+                content
+              else
+                String.trim_trailing(content) <> "\n\n" <> locale_helpers <> "\n"
+              end
+
+            content =
+              Regex.replace(
+                content,
+                ~r/def on_mount\(:current_user, _params, session, socket\) do\n    \{:cont, AshAuthentication\.Phoenix\.LiveSession\.assign_new_resources\(socket, session\)\}\n  end/,
+                "def on_mount(:current_user, _params, session, socket) do\n    " <>
+                  current_user_body <> "\n  end"
+              )
+
+            Rewrite.Source.update(source, :content, content)
+          end)
+
+        {:error, igniter} ->
+          igniter
+      end
+    end
+
+    defp patch_config_for_locale(igniter, otp_app) do
+      Igniter.update_file(igniter, "config/config.exs", fn source ->
+        content = Rewrite.Source.get(source, :content)
+
+        content =
+          if String.contains?(content, ":locales") do
+            content
+          else
+            block = """
+
+            config :#{otp_app}, :locales, ~w(es en)
+            config :#{otp_app}, :default_locale, "es"
+            """
+
+            String.trim_trailing(content) <> block
+          end
+
+        Rewrite.Source.update(source, :content, content)
+      end)
+    end
+
+    defp patch_root_layout_lang(igniter, otp_app) do
+      root_layout = "lib/#{otp_app}_web/components/layouts/root.html.heex"
+
+      if Igniter.exists?(igniter, root_layout) do
+        Igniter.update_file(igniter, root_layout, fn source ->
+          content = Rewrite.Source.get(source, :content)
+
+          content =
+            if String.contains?(content, "assigns[:locale]") do
+              content
+            else
+              String.replace(
+                content,
+                ~s|<html lang="en">|,
+                "<html lang={assigns[:locale] || \"es\"}>",
+                global: false
+              )
+            end
+
+          Rewrite.Source.update(source, :content, content)
+        end)
+      else
+        igniter
+      end
     end
 
     # ──────────────────────────────────────────────
